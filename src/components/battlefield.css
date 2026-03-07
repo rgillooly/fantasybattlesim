@@ -1,0 +1,79 @@
+.battlefield {
+  border: 1px solid #333;
+  background: #222;
+}
+
+.square-tile {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid #444;
+  overflow: visible;
+}
+
+/* terrain colors */
+.terrain-normal {
+  background: #3a3a3a;
+}
+.terrain-difficult {
+  background: #5c4830;
+}
+.terrain-cover-half {
+  background: #305c78;
+}
+.terrain-cover-three {
+  background: #204060;
+}
+.terrain-cover-total {
+  background: #12203b;
+}
+.terrain-impassable {
+  background: #111;
+}
+
+/* units */
+.unit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  transition:
+    transform 0.15s ease,
+    z-index 0s,
+    box-shadow 0.15s ease;
+  transform-origin: center center;
+  background: #eee;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.unit-anchor {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.unit:hover {
+  transform: scale(2.2);
+  z-index: 999;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.team-A {
+  border: 2px solid #4aa3ff;
+}
+.team-B {
+  border: 2px solid #ff5b5b;
+}
+
+.delete-btn {
+  background: red;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 10px;
+}
