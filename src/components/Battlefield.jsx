@@ -4,8 +4,6 @@ import "./battlefield.css";
 
 const TILE_SIZE = 40; // px
 
-// How strongly units prefer cover over shorter distance.
-// Higher = will travel further to reach better cover.
 const COVER_WEIGHT = 3;
 
 // Default movement range (in movement points) if a template doesn't define one.
