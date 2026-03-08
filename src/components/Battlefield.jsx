@@ -11,11 +11,6 @@ const COVER_WEIGHT = 3;
 // Default movement range (in movement points) if a template doesn't define one.
 const DEFAULT_MOVE = 4;
 
-/**
- * Dijkstra's algorithm — returns { "x,y": costToReach } for every tile
- * reachable within `maxCost` movement points from (startX, startY).
- * Impassable tiles and tiles occupied by other units are blocked.
- */
 function getReachableTiles(startX, startY, maxCost, tiles, units, selfId) {
   const tileMap = {};
   for (const t of tiles) tileMap[`${t.x},${t.y}`] = t;
