@@ -3,5 +3,4 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  base: "/fantasybattlesim/", // must match your repo name exactly
 });
