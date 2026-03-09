@@ -1,7 +1,6 @@
 // src/battleLogic.js
 import { gridDistance } from "./gridUtils";
 
-// 8 directions, diagonals allowed
 const SQUARE_DIRS = [
   { x: 1, y: 0 },
   { x: -1, y: 0 },
@@ -17,21 +16,40 @@ function getTile(tiles, x, y) {
   return tiles.find((t) => t.x === x && t.y === y);
 }
 
-function getNeighbors(tiles, tile) {
-  return SQUARE_DIRS.map((d) =>
-    getTile(tiles, tile.x + d.x, tile.y + d.y)
-  ).filter(Boolean);
-}
-
 function hexKey(x, y) {
   return `${x},${y}`;
 }
 
-// ---- A* PATHFINDING (square grid) ----
+// ---- DICE HELPERS ----
+
+export function rollDice(expression) {
+  if (typeof expression === "number") return expression;
+  if (!expression) return 0;
+  const match = String(expression)
+    .trim()
+    .match(/^(\d+)d(\d+)([+-]\d+)?$/i);
+  if (!match) {
+    const flat = parseInt(expression, 10);
+    return isNaN(flat) ? 0 : flat;
+  }
+  const count = parseInt(match[1], 10);
+  const sides = parseInt(match[2], 10);
+  const modifier = match[3] ? parseInt(match[3], 10) : 0;
+  let total = modifier;
+  for (let i = 0; i < count; i++)
+    total += Math.floor(Math.random() * sides) + 1;
+  return total;
+}
+
+function rollToHit(dc = 10) {
+  const roll = Math.floor(Math.random() * 20) + 1;
+  return { hit: roll >= dc, roll };
+}
+
+// ---- A* ----
 function aStar(start, goal, tiles, ignoreTerrain = false) {
   const startKey = hexKey(start.x, start.y);
   const goalKey = hexKey(goal.x, goal.y);
-
   const open = new Map();
   const closed = new Set();
   const cameFrom = new Map();
@@ -43,14 +61,11 @@ function aStar(start, goal, tiles, ignoreTerrain = false) {
     f: gridDistance(start, goal),
   });
 
-  function getTileLocal(x, y) {
-    return tiles.find((t) => t.x === x && t.y === y);
-  }
+  const getTileLocal = (x, y) => tiles.find((t) => t.x === x && t.y === y);
 
   while (open.size > 0) {
-    let currentKey = null;
-    let current = null;
-
+    let currentKey = null,
+      current = null;
     for (const [key, node] of open.entries()) {
       if (!current || node.f < current.f) {
         current = node;
@@ -73,64 +88,50 @@ function aStar(start, goal, tiles, ignoreTerrain = false) {
     closed.add(currentKey);
 
     const [cx, cy] = currentKey.split(",").map(Number);
-    const currentTile = getTileLocal(cx, cy);
-    if (!currentTile) continue;
-
     for (const d of SQUARE_DIRS) {
-      const nx = cx + d.x;
-      const ny = cy + d.y;
+      const nx = cx + d.x,
+        ny = cy + d.y;
       const neighborTile = getTileLocal(nx, ny);
       if (!neighborTile) continue;
-
       if (!ignoreTerrain && neighborTile.terrain?.blocksMovement) continue;
-
       const nk = hexKey(nx, ny);
       if (closed.has(nk)) continue;
-
       const moveCost = ignoreTerrain
         ? 1
         : neighborTile.terrain?.movementCost || 1;
       const g = current.g + moveCost;
       const h = gridDistance(neighborTile, goal);
-      const f = g + h;
-
       const existing = open.get(nk);
       if (!existing || g < existing.g) {
-        open.set(nk, { x: nx, y: ny, g, f });
+        open.set(nk, { x: nx, y: ny, g, f: g + h });
         cameFrom.set(nk, currentKey);
       }
     }
   }
-
-  return null; // no path
+  return null;
 }
 
-// ---- LOS (Bresenham, square) ----
+// ---- LOS ----
 function hasLineOfSight(attacker, target, tiles, ignoreTerrain) {
   if (ignoreTerrain) return true;
-
-  let x1 = attacker.x;
-  let y1 = attacker.y;
-  const x2 = target.x;
-  const y2 = target.y;
-
-  const dx = Math.abs(x2 - x1);
-  const dy = Math.abs(y2 - y1);
-  const sx = x1 < x2 ? 1 : -1;
-  const sy = y1 < y2 ? 1 : -1;
+  let x1 = attacker.x,
+    y1 = attacker.y;
+  const x2 = target.x,
+    y2 = target.y;
+  const dx = Math.abs(x2 - x1),
+    dy = Math.abs(y2 - y1);
+  const sx = x1 < x2 ? 1 : -1,
+    sy = y1 < y2 ? 1 : -1;
   let err = dx - dy;
-
   while (!(x1 === x2 && y1 === y2)) {
     const tile = getTile(tiles, x1, y1);
-
     if (tile && (tile.terrain?.blocksAttacks || tile.terrain?.blocksMovement)) {
-      const isSource = x1 === attacker.x && y1 === attacker.y;
-      const isTarget = x1 === target.x && y1 === target.y;
-      if (!isSource && !isTarget) {
+      if (
+        !(x1 === attacker.x && y1 === attacker.y) &&
+        !(x1 === target.x && y1 === target.y)
+      )
         return false;
-      }
     }
-
     const e2 = 2 * err;
     if (e2 > -dy) {
       err -= dy;
@@ -141,14 +142,12 @@ function hasLineOfSight(attacker, target, tiles, ignoreTerrain) {
       y1 += sy;
     }
   }
-
   const targetTile = getTile(tiles, target.x, target.y);
   if (targetTile?.terrain?.blocksAttacks) return false;
-
   return true;
 }
 
-// ---- GENERAL HELPERS ----
+// ---- HELPERS ----
 function getTemplate(templates, id) {
   return templates.find((t) => t.id === id);
 }
@@ -159,7 +158,7 @@ function isOccupied(units, x, y, ignoreId = null) {
       u.currentHp > 0 &&
       u.x === x &&
       u.y === y &&
-      (!ignoreId || u.id !== ignoreId)
+      (!ignoreId || u.id !== ignoreId),
   );
 }
 
@@ -168,70 +167,73 @@ function abilityBonus(score) {
 }
 
 function getCoverBonusForTarget(target, tiles) {
-  const tile = getTile(tiles, target.x, target.y);
-  return tile?.terrain?.defenseBonus || 0;
+  return getTile(tiles, target.x, target.y)?.terrain?.defenseBonus || 0;
 }
 
 function unitHasFlying(unit, templates, abilities) {
   const tpl = getTemplate(templates, unit.templateId);
-  if (!tpl || !tpl.abilities) return false;
-  return tpl.abilities.some((id) => {
-    const ab = abilities.find((a) => a.id === id);
-    return ab?.flying === true;
-  });
-}
-
-function abilityScoreForSave(target, ability, templates) {
-  if (!ability.saveAbility) return 10;
-  const tpl = getTemplate(templates, target.templateId);
-  if (!tpl || !tpl.stats) return 10;
-  return tpl.stats[ability.saveAbility] ?? 10;
+  if (!tpl?.abilities) return false;
+  return tpl.abilities.some(
+    (id) => abilities.find((a) => a.id === id)?.flying === true,
+  );
 }
 
 function rollSavingThrow(target, ability, templates) {
-  const score = abilityScoreForSave(target, ability, templates);
-  const bonus = abilityBonus(score);
-  const roll = Math.floor(Math.random() * 20) + 1; // d20
-  const total = roll + bonus;
-  return total >= (ability.saveDC || 10);
+  const tpl = getTemplate(templates, target.templateId);
+  const score =
+    (ability.saveAbility && tpl?.stats?.[ability.saveAbility]) ?? 10;
+  return (
+    Math.floor(Math.random() * 20) + 1 + abilityBonus(score) >=
+    (ability.saveDC || 10)
+  );
 }
 
-// ---- ATTACK / ABILITY SELECTION ----
-
-// We keep this as a helper but don't rely on it for damage anymore.
-// You can remove it entirely if you no longer want weapon attacks.
+// ---- WEAPON ATTACK ----
 function canAttackWithWeapon(attacker, target, tiles, templates, abilities) {
   const tpl = getTemplate(templates, attacker.templateId);
   if (!tpl) return { allowed: false };
-
   const range = tpl.stats.range || 1;
-  const dist = gridDistance(attacker, target);
-  if (dist > range) return { allowed: false };
-
+  if (gridDistance(attacker, target) > range) return { allowed: false };
   const ignoreTerrain = unitHasFlying(attacker, templates, abilities);
-  if (!hasLineOfSight(attacker, target, tiles, ignoreTerrain)) {
+  if (!hasLineOfSight(attacker, target, tiles, ignoreTerrain))
     return { allowed: false };
-  }
-
-  const cover = getCoverBonusForTarget(target, tiles);
-  return { allowed: true, cover };
+  return { allowed: true, cover: getCoverBonusForTarget(target, tiles) };
 }
 
-// Also kept for backward compatibility; you can safely delete if not using.
-function applyWeaponDamage(attacker, target, coverBonus, templates) {
+/**
+ * Returns { dmg, hit, miss, reason } so the caller can log what happened.
+ */
+function resolveWeaponDamage(attacker, target, coverBonus, templates) {
   const attTpl = getTemplate(templates, attacker.templateId);
   const tgtTpl = getTemplate(templates, target.templateId);
-  if (!attTpl || !tgtTpl) return;
-  const atk = attTpl.stats.attack || 0;
-  const def = (tgtTpl.stats.defense || 0) + (coverBonus || 0);
-  const dmg = Math.max(1, atk - def);
-  target.currentHp -= dmg;
+  if (!attTpl || !tgtTpl)
+    return { dmg: 0, miss: true, reason: "missing template" };
+
+  const stats = attTpl.stats;
+
+  if (stats.useHitRoll) {
+    const dc = (stats.hitDC ?? 10) + (coverBonus ?? 0);
+    const { hit, roll } = rollToHit(dc);
+    if (!hit)
+      return { dmg: 0, miss: true, reason: `rolled ${roll} (needed ${dc})` };
+  }
+
+  let dmg;
+  if (stats.damageMode === "dice") {
+    dmg = rollDice(stats.damageDice || "1d6");
+  } else {
+    const atk = stats.attack || 0;
+    const def = (tgtTpl.stats.defense || 0) + (coverBonus || 0);
+    dmg = Math.max(1, atk - def);
+  }
+
+  return { dmg, miss: false };
 }
 
-// Offensive abilities: choose best target & ability, prioritizing vulnerability
+// ---- ABILITY SYSTEM ----
 function chooseOffensiveAbility(unit, enemies, tiles, templates, abilities) {
   const tpl = getTemplate(templates, unit.templateId);
-  if (!tpl || !tpl.abilities || tpl.abilities.length === 0) return null;
+  if (!tpl?.abilities?.length) return null;
 
   const unitAbilities = tpl.abilities
     .map((id) => abilities.find((a) => a.id === id))
@@ -239,48 +241,45 @@ function chooseOffensiveAbility(unit, enemies, tiles, templates, abilities) {
       (a) =>
         a &&
         ["damage", "dot", "debuff", "slow"].includes(a.type) &&
-        a.shape !== "self"
+        a.shape !== "self",
     );
 
-  if (unitAbilities.length === 0) return null;
+  if (!unitAbilities.length) return null;
 
-  let bestChoice = null;
-  let bestScore = -Infinity;
+  let bestChoice = null,
+    bestScore = -Infinity;
 
   for (const ab of unitAbilities) {
     const range = ab.range || 3;
-    const dmg = ab.damage || 0;
     const damageType = ab.damageType || "physical";
     const ignoreTerrain = unitHasFlying(unit, templates, abilities);
+
+    let estimatedDmg = ab.damage || 0;
+    if (ab.damageMode === "dice" && ab.damageDice) {
+      const m = String(ab.damageDice).match(/^(\d+)d(\d+)([+-]\d+)?$/i);
+      if (m)
+        estimatedDmg =
+          parseInt(m[1]) * ((parseInt(m[2]) + 1) / 2) +
+          (m[3] ? parseInt(m[3]) : 0);
+    }
 
     for (const enemy of enemies) {
       const dist = gridDistance(unit, enemy);
       if (dist > range) continue;
       if (!hasLineOfSight(unit, enemy, tiles, ignoreTerrain)) continue;
-
       const enemyTpl = getTemplate(templates, enemy.templateId);
       if (!enemyTpl) continue;
 
       const cover = getCoverBonusForTarget(enemy, tiles);
-      const maxHp = enemyTpl.stats.maxHp || 1;
-      const hpMissing = maxHp - enemy.currentHp;
-
+      const hpMissing = (enemyTpl.stats.maxHp || 1) - enemy.currentHp;
       const isVulnerable =
         enemyTpl.vulnerabilities?.includes(damageType) || false;
       const isResistant = enemyTpl.resistances?.includes(damageType) || false;
 
-      // Scoring:
-      // - Big bonus for hitting vulnerabilities
-      // - Penalty if resistant
-      // - Prefer more damage, less cover, closer, and lower hp
       let score = 0;
-      if (isVulnerable) score += 100; // <<< big bias toward vuln targets
+      if (isVulnerable) score += 100;
       if (isResistant) score -= 40;
-
-      score += dmg; // raw power
-      score -= cover * 2; // avoid high cover
-      score -= dist; // prefer closer
-      score += hpMissing * 0.1; // prefer finishing wounded targets
+      score += estimatedDmg - cover * 2 - dist + hpMissing * 0.1;
 
       if (score > bestScore) {
         bestScore = score;
@@ -288,92 +287,85 @@ function chooseOffensiveAbility(unit, enemies, tiles, templates, abilities) {
       }
     }
   }
-
   return bestChoice;
 }
 
-function applyAbilityEffect(caster, target, ability, templates) {
+/**
+ * Returns { dmg, heal, miss, reason } for logging.
+ */
+function resolveAbilityEffect(
+  caster,
+  target,
+  ability,
+  templates,
+  coverBonus = 0,
+) {
   const targetTemplate = getTemplate(templates, target.templateId);
-  if (!targetTemplate) return;
+  if (!targetTemplate)
+    return { dmg: 0, miss: true, reason: "missing template" };
 
-  let damage = ability.damage || 0;
-  let heal = ability.heal || 0;
-  const damageType = ability.damageType || "physical";
-
-  // -----------------------------------------
-  // 1. Attack roll (if ability has attackBonus)
-  // -----------------------------------------
-  if (ability.attackBonus !== undefined) {
-    const roll = Math.floor(Math.random() * 20) + 1; // d20
-    const attackTotal = roll + (ability.attackBonus || 0);
-
-    // target "AC": support both ac and defense field names
-    const targetAC =
-      targetTemplate.stats.ac ?? targetTemplate.stats.defense ?? 10;
-
-    if (attackTotal < targetAC) {
-      // MISS
-      return;
-    }
+  // Hit roll
+  if (ability.useHitRoll) {
+    const dc = (ability.hitDC ?? 10) + coverBonus;
+    const { hit, roll } = rollToHit(dc);
+    if (!hit)
+      return { dmg: 0, miss: true, reason: `rolled ${roll} (needed ${dc})` };
   }
 
-  // -----------------------------------------
-  // 2. Saving Throw (optional)
-  // -----------------------------------------
+  // Legacy attack bonus
+  if (!ability.useHitRoll && ability.attackBonus !== undefined) {
+    const roll = Math.floor(Math.random() * 20) + 1;
+    const total = roll + (ability.attackBonus || 0);
+    const ac = targetTemplate.stats.ac ?? targetTemplate.stats.defense ?? 10;
+    if (total < ac)
+      return { dmg: 0, miss: true, reason: `rolled ${total} vs AC ${ac}` };
+  }
+
+  const damageType = ability.damageType || "physical";
+  let damage =
+    ability.damageMode === "dice" && ability.damageDice
+      ? rollDice(ability.damageDice)
+      : ability.damage || 0;
+  let heal = ability.heal || 0;
+  let savedNote = "";
+
   if (ability.saveAbility) {
     const success = rollSavingThrow(target, ability, templates);
     if (success) {
       if (ability.halfOnSave) {
         damage = Math.floor(damage / 2);
         heal = Math.floor(heal / 2);
+        savedNote = " (save: half)";
       } else {
-        // Completely negated
         damage = 0;
         heal = 0;
+        savedNote = " (save: negated)";
       }
     }
   }
 
-  // -----------------------------------------
-  // 3. Resistances and Vulnerabilities
-  // -----------------------------------------
   if (targetTemplate.resistances?.includes(damageType)) {
     damage = Math.floor(damage / 2);
   }
-
   if (targetTemplate.vulnerabilities?.includes(damageType)) {
     damage = damage * 2;
   }
 
-  // -----------------------------------------
-  // 4. Apply damage or healing
-  // -----------------------------------------
-  if (damage > 0) {
-    target.currentHp -= damage;
-  }
-
-  if (heal > 0) {
-    target.currentHp += heal;
-  }
+  return { dmg: damage, heal, miss: false, note: savedNote };
 }
 
-// ---- TARGET / MOVEMENT CHOICE ----
+// ---- TARGETING ----
 function findNearestEnemy(unit, enemies) {
-  let best = null;
-  let bestDist = Infinity;
-  for (const e of enemies) {
+  return enemies.reduce((best, e) => {
     const d = gridDistance(unit, e);
-    if (d < bestDist) {
-      bestDist = d;
-      best = e;
-    }
-  }
-  return best;
+    return !best || d < gridDistance(unit, best) ? e : best;
+  }, null);
 }
 
 // ---- MAIN SIMULATION ----
 export function simulateRound(battleState, templates, abilities) {
   const tiles = battleState.tiles;
+  const roundNum = battleState.round + 1;
 
   const units = battleState.units.map((u) => ({
     ...u,
@@ -381,14 +373,24 @@ export function simulateRound(battleState, templates, abilities) {
     y: Number(u.y),
   }));
 
-  // Sort by initiative
   const order = [...units].sort((a, b) => {
-    const ta = getTemplate(templates, a.templateId);
-    const tb = getTemplate(templates, b.templateId);
-    const ia = ta?.stats?.initiative ?? 0;
-    const ib = tb?.stats?.initiative ?? 0;
+    const ia = getTemplate(templates, a.templateId)?.stats?.initiative ?? 0;
+    const ib = getTemplate(templates, b.templateId)?.stats?.initiative ?? 0;
     return ib - ia;
   });
+
+  // Log for this round: array of { unitName, team, action, detail }
+  const roundLog = [];
+
+  const log = (unit, tpl, action, detail = "") => {
+    roundLog.push({
+      round: roundNum,
+      unitName: tpl?.name ?? unit.id,
+      team: unit.team,
+      action,
+      detail,
+    });
+  };
 
   for (const acting of order) {
     const unit = units.find((u) => u.id === acting.id);
@@ -398,70 +400,110 @@ export function simulateRound(battleState, templates, abilities) {
     if (!tpl) continue;
 
     const enemies = units.filter(
-      (u) => u.team !== unit.team && u.currentHp > 0
+      (u) => u.team !== unit.team && u.currentHp > 0,
     );
     if (enemies.length === 0) break;
 
     const hasFly = unitHasFlying(unit, templates, abilities);
 
-    // 1) Try to use an offensive ability (if any)
+    // 1) Offensive ability
     const abilityChoice = chooseOffensiveAbility(
       unit,
       enemies,
       tiles,
       templates,
-      abilities
+      abilities,
     );
-
     if (abilityChoice) {
-      applyAbilityEffect(
+      const { ability, target } = abilityChoice;
+      const cover = getCoverBonusForTarget(target, tiles);
+      const targetTpl = getTemplate(templates, target.templateId);
+      const result = resolveAbilityEffect(
         unit,
-        abilityChoice.target,
-        abilityChoice.ability,
-        templates
+        target,
+        ability,
+        templates,
+        cover,
       );
+
+      if (result.miss) {
+        log(
+          unit,
+          tpl,
+          "miss",
+          `used ${ability.name} on ${targetTpl?.name} — missed${result.reason ? ` (${result.reason})` : ""}`,
+        );
+      } else if (result.heal > 0) {
+        log(
+          unit,
+          tpl,
+          "heal",
+          `used ${ability.name} → healed ${result.heal} HP${result.note || ""}`,
+        );
+        target.currentHp += result.heal;
+      } else {
+        const hpBefore = target.currentHp;
+        target.currentHp -= result.dmg;
+        const died = target.currentHp <= 0;
+        log(
+          unit,
+          tpl,
+          died ? "kill" : "ability",
+          `used ${ability.name} on ${targetTpl?.name} — ${result.dmg} dmg${result.note || ""}${died ? " (killed)" : ` (${target.currentHp}/${targetTpl?.stats?.maxHp} HP left)`}`,
+        );
+      }
       continue;
     }
 
-    // 2) (Optional) Try weapon attack as fallback
-    // If you don't want this at all, you can delete this whole block.
-    let bestWeaponTarget = null;
-    let bestScore = -Infinity;
-
+    // 2) Weapon attack
+    let bestWeaponTarget = null,
+      bestScore = -Infinity;
     for (const enemy of enemies) {
       const check = canAttackWithWeapon(
         unit,
         enemy,
         tiles,
         templates,
-        abilities
+        abilities,
       );
       if (!check.allowed) continue;
-
       const dist = gridDistance(unit, enemy);
-      const cover = check.cover;
       const hpMissing =
         (getTemplate(templates, enemy.templateId)?.stats.maxHp || 0) -
         enemy.currentHp;
-
-      const score = -cover * 2 - dist + hpMissing * 0.1;
+      const score = -check.cover * 2 - dist + hpMissing * 0.1;
       if (score > bestScore) {
         bestScore = score;
-        bestWeaponTarget = { enemy, cover };
+        bestWeaponTarget = { enemy, cover: check.cover };
       }
     }
 
     if (bestWeaponTarget) {
-      applyWeaponDamage(
-        unit,
-        bestWeaponTarget.enemy,
-        bestWeaponTarget.cover,
-        templates
-      );
+      const { enemy, cover } = bestWeaponTarget;
+      const targetTpl = getTemplate(templates, enemy.templateId);
+      const result = resolveWeaponDamage(unit, enemy, cover, templates);
+
+      if (result.miss) {
+        log(
+          unit,
+          tpl,
+          "miss",
+          `attacked ${targetTpl?.name} — missed (${result.reason})`,
+        );
+      } else {
+        enemy.currentHp -= result.dmg;
+        const died = enemy.currentHp <= 0;
+        log(
+          unit,
+          tpl,
+          died ? "kill" : "attack",
+          `attacked ${targetTpl?.name} — ${result.dmg} dmg${died ? " (killed)" : ` (${enemy.currentHp}/${targetTpl?.stats?.maxHp} HP left)`}`,
+        );
+      }
       continue;
     }
 
-    // 3) Move toward nearest enemy using A*
+    // 3) Move
     const nearest = findNearestEnemy(unit, enemies);
     if (!nearest) continue;
 
@@ -469,39 +511,49 @@ export function simulateRound(battleState, templates, abilities) {
       { x: unit.x, y: unit.y },
       { x: nearest.x, y: nearest.y },
       tiles,
-      hasFly // flyers ignore terrain in pathfinding
+      hasFly,
     );
-
     if (!path || path.length <= 1) continue;
 
     const movePoints = tpl.stats.speed ?? tpl.stats.movement ?? 3;
-    let remaining = movePoints;
-    let stepIndex = 1;
+    let remaining = movePoints,
+      stepIndex = 1;
     let finalPos = { x: unit.x, y: unit.y };
 
     while (stepIndex < path.length) {
       const step = path[stepIndex];
       const tile = getTile(tiles, step.x, step.y);
-      const cost = hasFly ? 1 : tile.terrain?.movementCost || 1;
+      const cost = hasFly ? 1 : tile?.terrain?.movementCost || 1;
       if (remaining < cost) break;
-
-      // avoid walking into another unit
       if (isOccupied(units, step.x, step.y, unit.id)) break;
-
       remaining -= cost;
       finalPos = { x: step.x, y: step.y };
       stepIndex++;
+    }
+
+    const nearestTpl = getTemplate(templates, nearest.templateId);
+    const moved = finalPos.x !== unit.x || finalPos.y !== unit.y;
+    if (moved) {
+      const destTile = getTile(tiles, finalPos.x, finalPos.y);
+      const terrain = destTile?.terrain?.type ?? "normal";
+      log(
+        unit,
+        tpl,
+        "move",
+        `moved to (${finalPos.x},${finalPos.y}) [${terrain}] toward ${nearestTpl?.name}`,
+      );
+    } else {
+      log(unit, tpl, "wait", `couldn't move toward ${nearestTpl?.name}`);
     }
 
     unit.x = finalPos.x;
     unit.y = finalPos.y;
   }
 
-  const alive = units.filter((u) => u.currentHp > 0);
-
   return {
     ...battleState,
-    units: alive,
-    round: battleState.round + 1,
+    units: units.filter((u) => u.currentHp > 0),
+    round: roundNum,
+    roundLog, // <-- new: array of log entries for this round
   };
 }

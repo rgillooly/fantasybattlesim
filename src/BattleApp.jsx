@@ -12,6 +12,7 @@ import AbilityLibrary from "./components/AbilityLibrary";
 import UnitEditor from "./components/UnitEditor";
 import ScenarioControls from "./components/ScenarioControls";
 import ResetAllData from "./components/ResetAllData";
+import BattleLog from "./components/BattleLog";
 
 export default function BattleApp() {
   const [rows, setRows] = useState(10);
@@ -19,7 +20,7 @@ export default function BattleApp() {
 
   const tiles = useMemo(() => generateGridTiles(rows, cols), [rows, cols]);
 
-  // ---------- LIBRARY STATE (persisted independently of scenarios) ----------
+  // ---------- LIBRARY STATE ----------
   const [templates, setTemplates] = useState(() => {
     const saved = JSON.parse(localStorage.getItem("templates") || "[]");
     return saved.length > 0
@@ -46,6 +47,10 @@ export default function BattleApp() {
     return { tiles, units: savedUnits, round: 1 };
   });
 
+  // ---------- BATTLE LOG ----------
+  // Accumulates entries across all rounds; cleared on reset.
+  const [battleLog, setBattleLog] = useState([]);
+
   const [templateToEdit, setTemplateToEdit] = useState(null);
   const [terrainEditMode, setTerrainEditMode] = useState(false);
 
@@ -53,42 +58,35 @@ export default function BattleApp() {
     JSON.parse(localStorage.getItem("scenarios") || "{}"),
   );
 
-  // ---------- PERSIST LIBRARY ----------
+  // ---------- PERSIST ----------
   useEffect(() => {
     localStorage.setItem("templates", JSON.stringify(templates));
   }, [templates]);
-
   useEffect(() => {
     localStorage.setItem("abilities", JSON.stringify(abilities));
   }, [abilities]);
-
-  // ---------- PERSIST BATTLE ----------
   useEffect(() => {
     localStorage.setItem("units", JSON.stringify(battleState.units));
   }, [battleState.units]);
-
   useEffect(() => {
     localStorage.setItem("scenarios", JSON.stringify(scenarios));
   }, [scenarios]);
 
   // ---------- SCENARIOS ----------
-  // Scenarios only snapshot the battlefield (tiles + units), NOT the library.
-  // This means loading a scenario never wipes your templates or abilities.
   function saveScenario(name) {
     if (!name) return;
-    const scenario = {
-      tiles: battleState.tiles,
-      units: battleState.units,
-    };
-    setScenarios({ ...scenarios, [name]: scenario });
+    setScenarios({
+      ...scenarios,
+      [name]: { tiles: battleState.tiles, units: battleState.units },
+    });
     alert(`Scenario "${name}" saved.`);
   }
 
   function loadScenario(name) {
     const sc = scenarios[name];
     if (!sc) return;
-    // Only restore battlefield state — library stays untouched
     setBattleState({ tiles: sc.tiles, units: sc.units, round: 1 });
+    setBattleLog([]); // clear log when loading a new scenario
     alert(`Scenario "${name}" loaded.`);
   }
 
@@ -109,12 +107,20 @@ export default function BattleApp() {
   }
 
   function handleStep() {
-    setBattleState((prev) => simulateRound(prev, templates, abilities));
+    setBattleState((prev) => {
+      const next = simulateRound(prev, templates, abilities);
+      // Accumulate this round's log entries
+      if (next.roundLog?.length) {
+        setBattleLog((log) => [...log, ...next.roundLog]);
+      }
+      return next;
+    });
   }
 
   function handleReset() {
     localStorage.removeItem("units");
     setBattleState({ tiles, units: [], round: 1 });
+    setBattleLog([]);
   }
 
   return (
@@ -193,16 +199,21 @@ export default function BattleApp() {
         </div>
 
         {/* RIGHT SIDE */}
-        <Battlefield
-          tiles={battleState.tiles}
-          units={battleState.units}
-          templates={templates}
-          setUnits={updateUnits}
-          terrainEditMode={terrainEditMode}
-          setTiles={(newTiles) =>
-            setBattleState({ ...battleState, tiles: newTiles })
-          }
-        />
+        <div
+          style={{ display: "flex", flexDirection: "column", flex: 1, gap: 0 }}
+        >
+          <Battlefield
+            tiles={battleState.tiles}
+            units={battleState.units}
+            templates={templates}
+            setUnits={updateUnits}
+            terrainEditMode={terrainEditMode}
+            setTiles={(newTiles) =>
+              setBattleState({ ...battleState, tiles: newTiles })
+            }
+          />
+          <BattleLog log={battleLog} />
+        </div>
       </div>
     </div>
   );
